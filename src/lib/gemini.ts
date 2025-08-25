@@ -16,8 +16,8 @@ const MAX_RETRIES = 3;
 
 // ✅ Updated to Gemini 2.5 models
 export const GEMINI_MODELS = {
-  GEMINI_PRO: 'gemini-2.5-pro',
-  GEMINI_FLASH: 'gemini-2.5-flash',
+  GEMINI_PRO: 'gemini-1.5-pro',
+  GEMINI_FLASH: 'gemini-1.5-flash',
   GEMINI_PRO_VISION: 'gemini-2.5-pro', // pro handles multimodal (text + image)
 } as const;
 
@@ -60,7 +60,7 @@ async function withRetry<T>(
  */
 export async function generateText(
   prompt: string,
-  model: GeminiModel = 'GEMINI_PRO',
+  model: GeminiModel = 'GEMINI_FLASH',
   imageData?: string
 ) {
   return withRetry(async () => {
@@ -91,7 +91,7 @@ export async function generateText(
  */
 export async function generateTextStream(
   prompt: string,
-  model: GeminiModel = 'GEMINI_PRO',
+  model: GeminiModel = 'GEMINI_FLASH',
   onChunk?: (chunk: string) => void,
   imageData?: string
 ) {
@@ -142,7 +142,7 @@ export async function generateTextAdvanced(
   return withRetry(async () => {
     try {
       const {
-        model = 'GEMINI_PRO',
+        model = 'GEMINI_FLASH',
         temperature = 0.7,
         topP = 1,
         topK = 1,
@@ -219,16 +219,16 @@ export async function chatWithGemini(
  */
 export async function analyzeReceiptImage(
   imageData: string,
-  model: GeminiModel = 'GEMINI_PRO_VISION'
+  model: GeminiModel = 'GEMINI_FLASH'
 ) {
   return withRetry(async () => {
     try {
       const geminiModel = genAI.getGenerativeModel(
         { model: GEMINI_MODELS[model] },
-        { apiVersion: 'v1beta' }
+        // { apiVersion: 'v1beta' }
       );
 
-      const prompt = `Analyze and extract all information from the image, 
+      const prompt = `extract all information from the image, 
       including business details, VAT, discounts, best by/expiry date, and 
       any other relevant fields. 
       Return the result strictly in JSON format:
@@ -279,7 +279,7 @@ export async function analyzeReceiptImage(
  */
 export async function getReceiptText(
   imageData: string,
-  model: GeminiModel = 'GEMINI_PRO_VISION'
+  model: GeminiModel = 'GEMINI_FLASH'
 ) {
   return withRetry(async () => {
     try {
