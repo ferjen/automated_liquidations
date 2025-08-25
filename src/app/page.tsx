@@ -3,7 +3,7 @@ import { useMemo, useRef, useState } from "react";
 import GeminiTest from "@/components/GeminiTest";
 import { Button } from "@/components/ui/enhanced-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/enhanced-card";
-import { Upload, FileText, Download, Trash2, Eye, EyeOff, Sparkles, Receipt, Brain } from "lucide-react";
+import { Upload, FileText, Download, Trash2, Eye, EyeOff, Sparkles, Receipt, Brain, ExternalLink } from "lucide-react";
 
 type Parsed = {
   businessName: string | null;
@@ -15,6 +15,12 @@ type Parsed = {
   pwdDiscountLabel: string | null;
   pwdDiscountAmount: number | null;
   totalAmountDue: number | null;
+  invoiceNumber: string | null; // Add this for filename generation
+  driveFileId?: string | null;
+  driveFileName?: string | null;
+  driveWebViewLink?: string | null;
+  driveWebContentLink?: string | null;
+  driveLink?: string | null; // Added driveLink property
 };
 
 type Tab = 'receipts' | 'gemini';
@@ -29,11 +35,13 @@ export default function Home() {
     fullText: string;
     imageUrl: string | null;
     expanded?: boolean;
+    driveLink?: string | null;
   }[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [rateLimited, setRateLimited] = useState(false);
+  const [uploadingToDrive, setUploadingToDrive] = useState<number | null>(null);
 
   function handleFilePicked(f: File | null) {
     setFile(f);
@@ -75,6 +83,51 @@ export default function Home() {
     }
   }
 
+  async function handleUploadToDrive(rowIndex: number) {
+    const row = rows[rowIndex];
+    if (!row.imageUrl) return;
+
+    setUploadingToDrive(rowIndex);
+    
+    try {
+      // Convert blob URL back to file
+      const response = await fetch(row.imageUrl);
+      const blob = await response.blob();
+      const file = new File([blob], `receipt_${rowIndex}.jpg`, { type: blob.type });
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('metadata', JSON.stringify({
+        dateIssued: new Date().toISOString().split('T')[0], // You might want to extract this from OCR
+        businessName: row.parsed.businessName,
+        tin: row.parsed.tin,
+        totalAmountDue: row.parsed.totalAmountDue,
+      }));
+
+      const res = await fetch('/api/upload-to-drive', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        throw new Error('Failed to upload to Google Drive');
+      }
+
+      const { driveLink } = await res.json();
+
+      // Update the row with drive link
+      setRows(prev => prev.map((r, i) => 
+        i === rowIndex ? { ...r, driveLink } : r
+      ));
+
+    } catch (error) {
+      console.error('Drive upload error:', error);
+      setError('Failed to upload to Google Drive');
+    } finally {
+      setUploadingToDrive(null);
+    }
+  }
+
   async function handleSave(row: Parsed) {
     const res = await fetch("/api/save", {
       method: "POST",
@@ -90,6 +143,7 @@ export default function Home() {
           pwd_discount_label: row.pwdDiscountLabel,
           pwd_discount_amount: row.pwdDiscountAmount,
           total_amount_due: row.totalAmountDue,
+          drive_link: row.driveLink,
         },
       }),
     });
@@ -107,6 +161,7 @@ export default function Home() {
       "PWD Discount",
       "PWD Discount Amount",
       "Total Amount Due",
+      "Drive Link",
     ];
     const rowsCsv = rows.map((r) =>
       [
@@ -119,6 +174,7 @@ export default function Home() {
         r.parsed.pwdDiscountLabel ?? "",
         r.parsed.pwdDiscountAmount ?? "",
         r.parsed.totalAmountDue ?? "",
+        r.driveLink ?? "",
       ]
         .map((v) => `"${String(v).replace(/"/g, '""')}"`)
         .join(",")
@@ -343,6 +399,7 @@ export default function Home() {
                     <th className="py-3 px-4 text-left font-medium">PWD Discount</th>
                     <th className="py-3 px-4 text-left font-medium">Discount Amount</th>
                     <th className="py-3 px-4 text-left font-medium">Total Due</th>
+                    <th className="py-3 px-4 text-left font-medium">Drive Link</th>
                     <th className="py-3 px-4 text-left font-medium">Actions</th>
                   </tr>
                 </thead>
@@ -373,7 +430,32 @@ export default function Home() {
                         <td className="py-3 px-4">{r.parsed.pwdDiscountAmount || '-'}</td>
                         <td className="py-3 px-4 font-bold text-green-600">{r.parsed.totalAmountDue || '-'}</td>
                         <td className="py-3 px-4">
+                          {r.driveLink ? (
+                            <a 
+                              href={r.driveLink} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 text-xs"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              View
+                            </a>
+                          ) : '-'}
+                        </td>
+                        <td className="py-3 px-4">
                           <div className="flex gap-2">
+                            <Button
+                              onClick={() => handleUploadToDrive(i)}
+                              disabled={uploadingToDrive === i || !r.imageUrl}
+                              variant="outline"
+                              size="sm"
+                            >
+                              {uploadingToDrive === i ? (
+                                <div className="w-3 h-3 border border-gray-300 border-t-blue-600 rounded-full animate-spin" />
+                              ) : (
+                                <Upload className="w-3 h-3" />
+                              )}
+                            </Button>
                             <Button
                               onClick={() => handleSave(r.parsed)}
                               variant="outline"
@@ -405,7 +487,7 @@ export default function Home() {
                       </tr>
                       {r.expanded && (
                         <tr key={`exp-${i}`} className="border-b bg-gray-25">
-                          <td className="p-4" colSpan={11}>
+                          <td className="p-4" colSpan={12}>
                             <Card className="bg-white/50">
                               <CardHeader className="pb-3">
                                 <CardTitle className="text-sm">OCR Raw Text</CardTitle>
