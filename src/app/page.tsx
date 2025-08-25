@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useRef, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import GeminiTest from "@/components/GeminiTest";
 import { Button } from "@/components/ui/enhanced-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/enhanced-card";
@@ -715,8 +715,8 @@ export default function Home() {
                 </thead>
                 <tbody>
                   {rows.map((r, i) => (
-                    <>
-                      <tr key={`row-${i}`} className="border-b hover:bg-gray-50 transition-colors">
+                    <React.Fragment key={`row-fragment-${i}`}>
+                      <tr className="border-b hover:bg-gray-50 transition-colors">
                         <td className="py-3 px-4 font-medium">{r.parsed.businessName || '-'}</td>
                         <td className="py-3 px-4">{r.parsed.location || '-'}</td>
                         <td className="py-3 px-4 font-mono text-xs">{r.parsed.tin || '-'}</td>
@@ -805,7 +805,7 @@ export default function Home() {
                         </td>
                       </tr>
                       {r.expanded && (
-                        <tr key={`exp-${i}`} className="border-b bg-gray-25">
+                        <tr className="border-b bg-gray-25">
                           <td className="p-4" colSpan={12}>
                             <Card className="bg-white/50">
                               <CardHeader className="pb-3">
@@ -820,7 +820,7 @@ export default function Home() {
                           </td>
                         </tr>
                       )}
-                    </>
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>
