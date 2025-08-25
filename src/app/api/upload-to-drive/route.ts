@@ -12,27 +12,23 @@ export async function POST(req: NextRequest) {
     // Parse form data
     const formData = await req.formData();
     const file = formData.get("file") as File;
-    const metadataRaw = formData.get("metadata") as string;
+    const businessName = formData.get("businessName") as string;
+    const invoiceNumber = formData.get("invoiceNumber") as string;
+    const amount = formData.get("amount") as string;
+    const dateIssued = formData.get("dateIssued") as string;
+
+    console.log("Received data:", {
+      fileName: file?.name,
+      fileSize: file?.size,
+      businessName,
+      invoiceNumber,
+      amount,
+      dateIssued,
+    });
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
-
-    if (!metadataRaw) {
-      return NextResponse.json({ error: "No metadata provided" }, { status: 400 });
-    }
-
-    let metadata: any = {};
-    try {
-      metadata = JSON.parse(metadataRaw);
-    } catch {
-      return NextResponse.json({ error: "Invalid metadata JSON" }, { status: 400 });
-    }
-
-    const businessName = metadata.businessName ?? null;
-    const invoiceNumber = metadata.invoiceNumber ?? null;
-    const amount = metadata.totalAmountDue ?? null;
-    const dateIssued = metadata.dateIssued ?? null;
 
     // Check file size (allow up to 10MB)
     if (file.size > 10 * 1024 * 1024) {
@@ -49,7 +45,7 @@ export async function POST(req: NextRequest) {
 
     console.log("Processing file:", file.name, file.type, file.size);
 
-    // Convert file to buffer using streaming
+    // Convert file to buffer using streaming for large files
     const chunks: Uint8Array[] = [];
     const reader = file.stream().getReader();
 
@@ -59,8 +55,9 @@ export async function POST(req: NextRequest) {
       chunks.push(value);
     }
 
-    const totalSize = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-    const arrayBuffer = new Uint8Array(totalSize);
+    const arrayBuffer = new Uint8Array(
+      chunks.reduce((acc, chunk) => acc + chunk.length, 0)
+    );
     let offset = 0;
     for (const chunk of chunks) {
       arrayBuffer.set(chunk, offset);
@@ -71,6 +68,7 @@ export async function POST(req: NextRequest) {
 
     // Generate filename
     const fileName = generateDriveFileName(
+      dateIssued,
       businessName,
       invoiceNumber,
       amount ? parseFloat(amount) : null,
@@ -82,17 +80,23 @@ export async function POST(req: NextRequest) {
     // Upload to Google Drive
     const result = await uploadToGoogleDrive(buffer, fileName, file.type);
 
+    console.log("Upload successful:", result);
+
     return NextResponse.json({
       success: true,
       fileId: result.fileId,
       fileName: result.fileName,
       webViewLink: result.webViewLink,
       webContentLink: result.webContentLink,
+      driveLink: result.webViewLink, // Add for backward compatibility
     });
   } catch (error: any) {
     console.error("Error uploading to Google Drive:", error);
     return NextResponse.json(
-      { error: error.message || "Failed to upload to Google Drive" },
+      {
+        error: error.message || "Failed to upload to Google Drive",
+        details: error.stack,
+      },
       { status: 500 }
     );
   }

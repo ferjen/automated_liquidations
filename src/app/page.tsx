@@ -97,12 +97,10 @@ export default function Home() {
 
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('metadata', JSON.stringify({
-        dateIssued: new Date().toISOString().split('T')[0], // You might want to extract this from OCR
-        businessName: row.parsed.businessName,
-        tin: row.parsed.tin,
-        totalAmountDue: row.parsed.totalAmountDue,
-      }));
+      formData.append('businessName', row.parsed.businessName || '');
+      formData.append('invoiceNumber', row.parsed.invoiceNumber || '');
+      formData.append('amount', row.parsed.totalAmountDue?.toString() || '');
+      formData.append('dateIssued', new Date().toISOString().split('T')[0]);
 
       const res = await fetch('/api/upload-to-drive', {
         method: 'POST',
@@ -110,19 +108,36 @@ export default function Home() {
       });
 
       if (!res.ok) {
-        throw new Error('Failed to upload to Google Drive');
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'Failed to upload to Google Drive');
       }
 
-      const { driveLink } = await res.json();
+      const result = await res.json();
+      console.log('Upload result:', result); // Debug log
 
-      // Update the row with drive link
+      // Update the row with Google Drive info
       setRows(prev => prev.map((r, i) => 
-        i === rowIndex ? { ...r, driveLink } : r
+        i === rowIndex 
+          ? {
+              ...r,
+              parsed: {
+                ...r.parsed,
+                driveFileId: result.fileId,
+                driveFileName: result.fileName,
+                driveWebViewLink: result.webViewLink,
+                driveWebContentLink: result.webContentLink,
+                driveLink: result.webViewLink, // Add this for backward compatibility
+              },
+              driveLink: result.webViewLink // Also add at row level
+            }
+          : r
       ));
 
-    } catch (error) {
+      console.log('Successfully uploaded to Google Drive:', result.fileName);
+
+    } catch (error: any) {
       console.error('Drive upload error:', error);
-      setError('Failed to upload to Google Drive');
+      setError(error.message || 'Failed to upload to Google Drive');
     } finally {
       setUploadingToDrive(null);
     }
@@ -143,11 +158,21 @@ export default function Home() {
           pwd_discount_label: row.pwdDiscountLabel,
           pwd_discount_amount: row.pwdDiscountAmount,
           total_amount_due: row.totalAmountDue,
-          drive_link: row.driveLink,
+          invoice_number: row.invoiceNumber,
+          drive_file_id: row.driveFileId,
+          drive_file_name: row.driveFileName,
+          drive_web_view_link: row.driveWebViewLink,
+          drive_web_content_link: row.driveWebContentLink,
+          drive_link: row.driveWebViewLink || row.driveLink,
         },
       }),
     });
-    if (!res.ok) alert("Failed to save to Supabase");
+    if (!res.ok) {
+      const errorData = await res.json();
+      alert(`Failed to save to Supabase: ${errorData.error || 'Unknown error'}`);
+    } else {
+      alert('Successfully saved to database!');
+    }
   }
 
   const csv = useMemo(() => {
@@ -161,7 +186,8 @@ export default function Home() {
       "PWD Discount",
       "PWD Discount Amount",
       "Total Amount Due",
-      "Drive Link",
+      "Google Drive Link",
+      "Drive File Name",
     ];
     const rowsCsv = rows.map((r) =>
       [
@@ -174,7 +200,8 @@ export default function Home() {
         r.parsed.pwdDiscountLabel ?? "",
         r.parsed.pwdDiscountAmount ?? "",
         r.parsed.totalAmountDue ?? "",
-        r.driveLink ?? "",
+        (r.parsed.driveWebViewLink || r.driveLink) ?? "",
+        r.parsed.driveFileName ?? "",
       ]
         .map((v) => `"${String(v).replace(/"/g, '""')}"`)
         .join(",")
@@ -430,17 +457,26 @@ export default function Home() {
                         <td className="py-3 px-4">{r.parsed.pwdDiscountAmount || '-'}</td>
                         <td className="py-3 px-4 font-bold text-green-600">{r.parsed.totalAmountDue || '-'}</td>
                         <td className="py-3 px-4">
-                          {r.driveLink ? (
-                            <a 
-                              href={r.driveLink} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 text-xs"
-                            >
-                              <ExternalLink className="w-3 h-3" />
-                              View
-                            </a>
-                          ) : '-'}
+                          {r.parsed.driveWebViewLink || r.driveLink ? (
+                            <div className="flex flex-col gap-1">
+                              <a
+                                href={r.parsed.driveWebViewLink || r.driveLink || '#'}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                                View in Drive
+                              </a>
+                              {r.parsed.driveFileName && (
+                                <span className="text-xs text-gray-500 truncate max-w-24" title={r.parsed.driveFileName}>
+                                  {r.parsed.driveFileName}
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-gray-400 text-xs">Not uploaded</span>
+                          )}
                         </td>
                         <td className="py-3 px-4">
                           <div className="flex gap-2">
