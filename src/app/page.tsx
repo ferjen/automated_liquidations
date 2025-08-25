@@ -42,6 +42,7 @@ export default function Home() {
   const [dragActive, setDragActive] = useState(false);
   const [rateLimited, setRateLimited] = useState(false);
   const [uploadingToDrive, setUploadingToDrive] = useState<number | null>(null);
+  const [autoUploadSuccess, setAutoUploadSuccess] = useState<string | null>(null);
 
   function handleFilePicked(f: File | null) {
     setFile(f);
@@ -72,10 +73,71 @@ export default function Home() {
       }
       
       const data = (await res.json()) as { parsed: Parsed; fullText: string };
-      setRows((prev) => [
-        ...prev,
-        { parsed: data.parsed, fullText: data.fullText, imageUrl: previewUrl ?? null, expanded: false },
-      ]);
+      
+      // Add the parsed row first
+      const newRowIndex = rows.length;
+      const newRow = { 
+        parsed: data.parsed, 
+        fullText: data.fullText, 
+        imageUrl: previewUrl ?? null, 
+        expanded: false 
+      };
+      
+      setRows((prev) => [...prev, newRow]);
+      
+      // Automatically upload to Google Drive after successful parsing
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('businessName', data.parsed.businessName || '');
+        formData.append('invoiceNumber', data.parsed.invoiceNumber || '');
+        formData.append('amount', data.parsed.totalAmountDue?.toString() || '');
+        formData.append('dateIssued', new Date().toISOString().split('T')[0]);
+
+        setUploadingToDrive(newRowIndex);
+        
+        const driveRes = await fetch('/api/upload-to-drive', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (driveRes.ok) {
+          const driveResult = await driveRes.json();
+          console.log('Auto-upload to Drive successful:', driveResult);
+          
+          // Show success message
+          setAutoUploadSuccess(`Successfully uploaded as: ${driveResult.fileName}`);
+          setTimeout(() => setAutoUploadSuccess(null), 5000); // Clear after 5 seconds
+          
+          // Update the row with Google Drive info
+          setRows(prev => prev.map((r, i) => 
+            i === newRowIndex 
+              ? {
+                  ...r,
+                  parsed: {
+                    ...r.parsed,
+                    driveFileId: driveResult.fileId,
+                    driveFileName: driveResult.fileName,
+                    driveWebViewLink: driveResult.webViewLink,
+                    driveWebContentLink: driveResult.webContentLink,
+                    driveLink: driveResult.webViewLink,
+                  },
+                  driveLink: driveResult.webViewLink
+                }
+              : r
+          ));
+        } else {
+          const driveError = await driveRes.json();
+          console.warn('Auto-upload to Drive failed:', driveError.error);
+          // Don't show error to user for auto-upload failure, just log it
+        }
+      } catch (driveError) {
+        console.warn('Auto-upload to Drive failed:', driveError);
+        // Don't show error to user for auto-upload failure, just log it
+      } finally {
+        setUploadingToDrive(null);
+      }
+      
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Error");
     } finally {
@@ -377,6 +439,17 @@ export default function Home() {
               </CardContent>
             </Card>
           )}
+
+          {autoUploadSuccess && (
+            <Card className="bg-green-50 border-green-200">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 text-green-800">
+                  <ExternalLink className="w-4 h-4" />
+                  <p className="text-sm font-medium">{autoUploadSuccess}</p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </CardContent>
       </Card>
 
@@ -474,6 +547,11 @@ export default function Home() {
                                 </span>
                               )}
                             </div>
+                          ) : uploadingToDrive === i ? (
+                            <div className="flex items-center gap-1 text-xs text-blue-600">
+                              <div className="w-3 h-3 border-2 border-blue-600/30 border-t-blue-600 rounded-full animate-spin" />
+                              <span>Uploading...</span>
+                            </div>
                           ) : (
                             <span className="text-gray-400 text-xs">Not uploaded</span>
                           )}
@@ -482,12 +560,19 @@ export default function Home() {
                           <div className="flex gap-2">
                             <Button
                               onClick={() => handleUploadToDrive(i)}
-                              disabled={uploadingToDrive === i || !r.imageUrl}
+                              disabled={uploadingToDrive === i || !r.imageUrl || !!(r.parsed.driveWebViewLink || r.driveLink)}
                               variant="outline"
                               size="sm"
+                              title={
+                                (r.parsed.driveWebViewLink || r.driveLink) 
+                                  ? "Already uploaded to Drive" 
+                                  : "Upload to Google Drive"
+                              }
                             >
                               {uploadingToDrive === i ? (
                                 <div className="w-3 h-3 border border-gray-300 border-t-blue-600 rounded-full animate-spin" />
+                              ) : (r.parsed.driveWebViewLink || r.driveLink) ? (
+                                <ExternalLink className="w-3 h-3 text-green-600" />
                               ) : (
                                 <Upload className="w-3 h-3" />
                               )}
