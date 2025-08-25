@@ -16,8 +16,8 @@ const MAX_RETRIES = 3;
 
 // ✅ Updated to Gemini 2.5 models
 export const GEMINI_MODELS = {
-  GEMINI_PRO: 'gemini-2.5-pro',
-  GEMINI_FLASH: 'gemini-2.5-flash',
+  GEMINI_PRO: 'gemini-1.5-pro',
+  GEMINI_FLASH: 'gemini-1.5-flash',
   GEMINI_PRO_VISION: 'gemini-2.5-pro', // pro handles multimodal (text + image)
 } as const;
 
@@ -60,7 +60,7 @@ async function withRetry<T>(
  */
 export async function generateText(
   prompt: string,
-  model: GeminiModel = 'GEMINI_PRO',
+  model: GeminiModel = 'GEMINI_FLASH',
   imageData?: string
 ) {
   return withRetry(async () => {
@@ -91,7 +91,7 @@ export async function generateText(
  */
 export async function generateTextStream(
   prompt: string,
-  model: GeminiModel = 'GEMINI_PRO',
+  model: GeminiModel = 'GEMINI_FLASH',
   onChunk?: (chunk: string) => void,
   imageData?: string
 ) {
@@ -142,7 +142,7 @@ export async function generateTextAdvanced(
   return withRetry(async () => {
     try {
       const {
-        model = 'GEMINI_PRO',
+        model = 'GEMINI_FLASH',
         temperature = 0.7,
         topP = 1,
         topK = 1,
@@ -219,31 +219,38 @@ export async function chatWithGemini(
  */
 export async function analyzeReceiptImage(
   imageData: string,
-  model: GeminiModel = 'GEMINI_PRO_VISION'
+  model: GeminiModel = 'GEMINI_FLASH'
 ) {
   return withRetry(async () => {
     try {
       const geminiModel = genAI.getGenerativeModel(
         { model: GEMINI_MODELS[model] },
-        { apiVersion: 'v1beta' }
+        // { apiVersion: 'v1beta' }
       );
 
-      const prompt = `Analyze and extract all information from the image, 
-      including business details, VAT, discounts, best by/expiry date, and 
+      const prompt = `Extract all information from the image, 
+      including business details, VAT, discounts, invoice/receipt number, best by/expiry date, and 
       any other relevant fields. 
       Return the result strictly in JSON format:
       {
         "businessName": "...",
         "location": "...",
         "tin": "...",
+        "invoiceNumber": "...",
         "vat": number|null,
         "vatExcl": number|null,
         "vatIncl": number|null,
         "pwdDiscountLabel": "...",
         "pwdDiscountAmount": number|null,
         "bestByDate": "YYYY-MM-DD" | null,
-        "totalAmountDue": "number"|null
-      }`;
+        "totalAmountDue": number|null
+      }
+
+      Important notes:
+      - Look for invoice number, receipt number, OR number, reference number, or any similar identifier
+      - Extract the exact number/code as it appears on the receipt
+      - If no invoice/receipt number is found, use null
+      - Numbers should be numeric values, not strings (except for invoiceNumber and businessName which should be strings)`;
 
       const imagePart = { inlineData: { data: imageData, mimeType: 'image/jpeg' } };
 
@@ -259,6 +266,7 @@ export async function analyzeReceiptImage(
         businessName: parsedData.businessName || null,
         location: parsedData.location || null,
         tin: parsedData.tin || null,
+        invoiceNumber: parsedData.invoiceNumber || null, // Add this line
         vat: typeof parsedData.vat === 'number' ? parsedData.vat : null,
         vatExcl: typeof parsedData.vatExcl === 'number' ? parsedData.vatExcl : null,
         vatIncl: typeof parsedData.vatIncl === 'number' ? parsedData.vatIncl : null,
@@ -279,7 +287,7 @@ export async function analyzeReceiptImage(
  */
 export async function getReceiptText(
   imageData: string,
-  model: GeminiModel = 'GEMINI_PRO_VISION'
+  model: GeminiModel = 'GEMINI_FLASH'
 ) {
   return withRetry(async () => {
     try {

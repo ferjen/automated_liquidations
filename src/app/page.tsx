@@ -3,7 +3,7 @@ import { useMemo, useRef, useState } from "react";
 import GeminiTest from "@/components/GeminiTest";
 import { Button } from "@/components/ui/enhanced-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/enhanced-card";
-import { Upload, FileText, Download, Trash2, Eye, EyeOff, Sparkles, Receipt, Brain } from "lucide-react";
+import { Upload, FileText, Download, Trash2, Eye, EyeOff, Sparkles, Receipt, Brain, ExternalLink } from "lucide-react";
 
 type Parsed = {
   businessName: string | null;
@@ -15,6 +15,12 @@ type Parsed = {
   pwdDiscountLabel: string | null;
   pwdDiscountAmount: number | null;
   totalAmountDue: number | null;
+  invoiceNumber: string | null; // Add this for filename generation
+  driveFileId?: string | null;
+  driveFileName?: string | null;
+  driveWebViewLink?: string | null;
+  driveWebContentLink?: string | null;
+  driveLink?: string | null; // Added driveLink property
 };
 
 type Tab = 'receipts' | 'gemini';
@@ -22,31 +28,236 @@ type Tab = 'receipts' | 'gemini';
 export default function Home() {
   const [activeTab, setActiveTab] = useState<Tab>('receipts');
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const [file, setFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [files, setFiles] = useState<File[]>([]); // Changed from single file to array
+  const [previewUrls, setPreviewUrls] = useState<string[]>([]); // Array of preview URLs
   const [rows, setRows] = useState<{
     parsed: Parsed;
     fullText: string;
     imageUrl: string | null;
     expanded?: boolean;
+    driveLink?: string | null;
   }[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [rateLimited, setRateLimited] = useState(false);
+  const [uploadingToDrive, setUploadingToDrive] = useState<number | null>(null);
+  const [autoUploadSuccess, setAutoUploadSuccess] = useState<string | null>(null);
+  const [processingFiles, setProcessingFiles] = useState<boolean[]>([]); // Track which files are being processed
 
-  function handleFilePicked(f: File | null) {
-    setFile(f);
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    if (f) setPreviewUrl(URL.createObjectURL(f));
-    else setPreviewUrl(null);
+  // Update file handling for multiple files
+  function handleFilesPicked(newFiles: FileList | File[] | null) {
+    if (!newFiles) {
+      setFiles([]);
+      // Clean up existing preview URLs
+      previewUrls.forEach(url => URL.revokeObjectURL(url));
+      setPreviewUrls([]);
+      return;
+    }
+
+    const fileArray = Array.from(newFiles);
+    
+    // Clean up existing preview URLs
+    previewUrls.forEach(url => URL.revokeObjectURL(url));
+    
+    // Create new preview URLs
+    const newPreviewUrls = fileArray.map(file => URL.createObjectURL(file));
+    
+    setFiles(fileArray);
+    setPreviewUrls(newPreviewUrls);
+    setProcessingFiles(new Array(fileArray.length).fill(false));
   }
 
-  async function handleParse() {
-    if (!file) return;
+  // Remove individual file
+  function removeFile(index: number) {
+    const newFiles = files.filter((_, i) => i !== index);
+    const newPreviewUrls = previewUrls.filter((_, i) => i !== index);
+    
+    // Clean up the removed preview URL
+    if (previewUrls[index]) {
+      URL.revokeObjectURL(previewUrls[index]);
+    }
+    
+    setFiles(newFiles);
+    setPreviewUrls(newPreviewUrls);
+    setProcessingFiles(new Array(newFiles.length).fill(false));
+  }
+
+  // Process all files
+  async function handleParseAll() {
+    if (files.length === 0) return;
+    
     setLoading(true);
     setError(null);
     setRateLimited(false);
+    
+    const newProcessingFiles = new Array(files.length).fill(true);
+    setProcessingFiles(newProcessingFiles);
+    
+    try {
+      // Process files in parallel with a limit to avoid overwhelming the API
+      const batchSize = 3; // Process 3 files at a time
+      const results = [];
+      
+      for (let i = 0; i < files.length; i += batchSize) {
+        const batch = files.slice(i, i + batchSize);
+        const batchPromises = batch.map(async (file, batchIndex) => {
+          const globalIndex = i + batchIndex;
+          
+          try {
+            const fd = new FormData();
+            fd.append("file", file);
+            const res = await fetch("/api/parse", { method: "POST", body: fd });
+            
+            if (!res.ok) {
+              if (res.status === 429) {
+                throw new Error("Rate limit reached");
+              } else {
+                throw new Error(`Failed to parse ${file.name}`);
+              }
+            }
+            
+            const data = (await res.json()) as { parsed: Parsed; fullText: string };
+            
+            return {
+              success: true,
+              data,
+              file,
+              previewUrl: previewUrls[globalIndex],
+              index: globalIndex
+            };
+          } catch (error) {
+            return {
+              success: false,
+              error: error instanceof Error ? error.message : "Unknown error",
+              file,
+              index: globalIndex
+            };
+          } finally {
+            // Mark this file as processed
+            setProcessingFiles(prev => {
+              const updated = [...prev];
+              updated[globalIndex] = false;
+              return updated;
+            });
+          }
+        });
+        
+        const batchResults = await Promise.all(batchPromises);
+        results.push(...batchResults);
+        
+        // Add delay between batches to respect rate limits
+        if (i + batchSize < files.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      
+      // Process successful results
+      const successfulResults = results.filter(r => r.success);
+      const failedResults = results.filter(r => !r.success);
+      
+      if (successfulResults.length > 0) {
+        const newRows = successfulResults.map(result => ({
+          parsed: result.data?.parsed || {
+            businessName: null,
+            location: null,
+            tin: null,
+            vat: null,
+            vatExcl: null,
+            vatIncl: null,
+            pwdDiscountLabel: null,
+            pwdDiscountAmount: null,
+            totalAmountDue: null,
+            invoiceNumber: null,
+            driveFileId: null,
+            driveFileName: null,
+            driveWebViewLink: null,
+            driveWebContentLink: null,
+            driveLink: null,
+          },
+          fullText: result.data?.fullText || "",
+          imageUrl: result.previewUrl || null,
+          expanded: false
+        }));
+        
+        setRows(prev => [...prev, ...newRows]);
+        
+        // Auto-upload to Google Drive for successful parses
+        for (let i = 0; i < successfulResults.length; i++) {
+          const result = successfulResults[i];
+          const rowIndex = rows.length + i;
+          
+          try {
+            const formData = new FormData();
+            formData.append('file', result.file);
+            formData.append('businessName', result.data?.parsed.businessName || '');
+            formData.append('invoiceNumber', result.data?.parsed.invoiceNumber || '');
+            formData.append('amount', result.data?.parsed.totalAmountDue?.toString() || '');
+            formData.append('dateIssued', new Date().toISOString().split('T')[0]);
+
+            setUploadingToDrive(rowIndex);
+            
+            const driveRes = await fetch('/api/upload-to-drive', {
+              method: 'POST',
+              body: formData,
+            });
+
+            if (driveRes.ok) {
+              const driveResult = await driveRes.json();
+              
+              // Update the specific row with Google Drive info
+              setRows(prev => prev.map((r, idx) => 
+                idx === rowIndex 
+                  ? {
+                      ...r,
+                      parsed: {
+                        ...r.parsed,
+                        driveFileId: driveResult.fileId,
+                        driveFileName: driveResult.fileName,
+                        driveWebViewLink: driveResult.webViewLink,
+                        driveWebContentLink: driveResult.webContentLink,
+                        driveLink: driveResult.webViewLink,
+                      },
+                      driveLink: driveResult.webViewLink
+                    }
+                  : r
+              ));
+            }
+          } catch (driveError) {
+            console.warn('Auto-upload to Drive failed for', result.file.name, driveError);
+          } finally {
+            setUploadingToDrive(null);
+          }
+          
+          // Add delay between uploads
+          if (i < successfulResults.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
+      }
+      
+      if (failedResults.length > 0) {
+        setError(`Failed to process ${failedResults.length} file(s): ${failedResults.map(r => r.file.name).join(', ')}`);
+      }
+      
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Error processing files");
+    } finally {
+      setLoading(false);
+      setProcessingFiles(new Array(files.length).fill(false));
+    }
+  }
+
+  // Process single file
+  async function handleParseSingle(fileIndex: number) {
+    if (!files[fileIndex]) return;
+    
+    const file = files[fileIndex];
+    setProcessingFiles(prev => {
+      const updated = [...prev];
+      updated[fileIndex] = true;
+      return updated;
+    });
     
     try {
       const fd = new FormData();
@@ -58,20 +269,134 @@ export default function Home() {
           setRateLimited(true);
           setError("Rate limit reached. Please wait a moment and try again.");
         } else {
-          throw new Error("Failed to parse");
+          throw new Error(`Failed to parse ${file.name}`);
         }
         return;
       }
       
       const data = (await res.json()) as { parsed: Parsed; fullText: string };
-      setRows((prev) => [
-        ...prev,
-        { parsed: data.parsed, fullText: data.fullText, imageUrl: previewUrl ?? null, expanded: false },
-      ]);
+      
+      // Add the parsed row
+      const newRowIndex = rows.length;
+      const newRow = { 
+        parsed: data.parsed, 
+        fullText: data.fullText, 
+        imageUrl: previewUrls[fileIndex], 
+        expanded: false 
+      };
+      
+      setRows(prev => [...prev, newRow]);
+      
+      // Auto-upload to Google Drive
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('businessName', data.parsed.businessName || '');
+        formData.append('invoiceNumber', data.parsed.invoiceNumber || '');
+        formData.append('amount', data.parsed.totalAmountDue?.toString() || '');
+        formData.append('dateIssued', new Date().toISOString().split('T')[0]);
+
+        setUploadingToDrive(newRowIndex);
+        
+        const driveRes = await fetch('/api/upload-to-drive', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (driveRes.ok) {
+          const driveResult = await driveRes.json();
+          
+          setRows(prev => prev.map((r, i) => 
+            i === newRowIndex 
+              ? {
+                  ...r,
+                  parsed: {
+                    ...r.parsed,
+                    driveFileId: driveResult.fileId,
+                    driveFileName: driveResult.fileName,
+                    driveWebViewLink: driveResult.webViewLink,
+                    driveWebContentLink: driveResult.webContentLink,
+                    driveLink: driveResult.webViewLink,
+                  },
+                  driveLink: driveResult.webViewLink
+                }
+              : r
+          ));
+        }
+      } catch (driveError) {
+        console.warn('Auto-upload to Drive failed:', driveError);
+      } finally {
+        setUploadingToDrive(null);
+      }
+      
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Error");
     } finally {
-      setLoading(false);
+      setProcessingFiles(prev => {
+        const updated = [...prev];
+        updated[fileIndex] = false;
+        return updated;
+      });
+    }
+  }
+
+  async function handleUploadToDrive(rowIndex: number) {
+    const row = rows[rowIndex];
+    if (!row.imageUrl) return;
+
+    setUploadingToDrive(rowIndex);
+    
+    try {
+      // Convert blob URL back to file
+      const response = await fetch(row.imageUrl);
+      const blob = await response.blob();
+      const file = new File([blob], `receipt_${rowIndex}.jpg`, { type: blob.type });
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('businessName', row.parsed.businessName || '');
+      formData.append('invoiceNumber', row.parsed.invoiceNumber || '');
+      formData.append('amount', row.parsed.totalAmountDue?.toString() || '');
+      formData.append('dateIssued', new Date().toISOString().split('T')[0]);
+
+      const res = await fetch('/api/upload-to-drive', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'Failed to upload to Google Drive');
+      }
+
+      const result = await res.json();
+      console.log('Upload result:', result); // Debug log
+
+      // Update the row with Google Drive info
+      setRows(prev => prev.map((r, i) => 
+        i === rowIndex 
+          ? {
+              ...r,
+              parsed: {
+                ...r.parsed,
+                driveFileId: result.fileId,
+                driveFileName: result.fileName,
+                driveWebViewLink: result.webViewLink,
+                driveWebContentLink: result.webContentLink,
+                driveLink: result.webViewLink, // Add this for backward compatibility
+              },
+              driveLink: result.webViewLink // Also add at row level
+            }
+          : r
+      ));
+
+      console.log('Successfully uploaded to Google Drive:', result.fileName);
+
+    } catch (error: any) {
+      console.error('Drive upload error:', error);
+      setError(error.message || 'Failed to upload to Google Drive');
+    } finally {
+      setUploadingToDrive(null);
     }
   }
 
@@ -90,10 +415,21 @@ export default function Home() {
           pwd_discount_label: row.pwdDiscountLabel,
           pwd_discount_amount: row.pwdDiscountAmount,
           total_amount_due: row.totalAmountDue,
+          invoice_number: row.invoiceNumber,
+          drive_file_id: row.driveFileId,
+          drive_file_name: row.driveFileName,
+          drive_web_view_link: row.driveWebViewLink,
+          drive_web_content_link: row.driveWebContentLink,
+          drive_link: row.driveWebViewLink || row.driveLink,
         },
       }),
     });
-    if (!res.ok) alert("Failed to save to Supabase");
+    if (!res.ok) {
+      const errorData = await res.json();
+      alert(`Failed to save to Supabase: ${errorData.error || 'Unknown error'}`);
+    } else {
+      alert('Successfully saved to database!');
+    }
   }
 
   const csv = useMemo(() => {
@@ -101,24 +437,30 @@ export default function Home() {
       "Business Name",
       "Location",
       "TIN",
+      "Invoice Number",
       "VAT",
       "VAT Excl",
       "VAT Incl",
       "PWD Discount",
       "PWD Discount Amount",
       "Total Amount Due",
+      "Google Drive Link",
+      "Drive File Name",
     ];
     const rowsCsv = rows.map((r) =>
       [
         r.parsed.businessName ?? "",
         r.parsed.location ?? "",
         r.parsed.tin ?? "",
+        r.parsed.invoiceNumber ?? "",
         r.parsed.vat ?? "",
         r.parsed.vatExcl ?? "",
         r.parsed.vatIncl ?? "",
         r.parsed.pwdDiscountLabel ?? "",
         r.parsed.pwdDiscountAmount ?? "",
         r.parsed.totalAmountDue ?? "",
+        (r.parsed.driveWebViewLink || r.driveLink) ?? "",
+        r.parsed.driveFileName ?? "",
       ]
         .map((v) => `"${String(v).replace(/"/g, '""')}"`)
         .join(",")
@@ -188,7 +530,8 @@ export default function Home() {
             ref={inputRef}
             type="file"
             accept="image/*"
-            onChange={(e) => handleFilePicked(e.target.files?.[0] ?? null)}
+            multiple // Allow multiple file selection
+            onChange={(e) => handleFilesPicked(e.target.files)}
             className="hidden"
           />
 
@@ -201,8 +544,8 @@ export default function Home() {
             onDrop={(e) => {
               e.preventDefault();
               setDragActive(false);
-              const f = e.dataTransfer.files?.[0];
-              if (f) handleFilePicked(f);
+              const newFiles = e.dataTransfer.files;
+              if (newFiles) handleFilesPicked(newFiles);
             }}
             className={`relative border-2 border-dashed rounded-xl p-8 grid gap-4 place-items-center min-h-40 text-center transition-all duration-300 ${
               dragActive 
@@ -210,13 +553,25 @@ export default function Home() {
                 : "border-gray-300 hover:border-blue-400 hover:bg-gray-50"
             }`}
           >
-            {previewUrl ? (
+            {previewUrls.length > 0 ? (
               <div className="space-y-4">
-                <img
-                  src={previewUrl}
-                  alt="Preview"
-                  className="max-h-64 w-auto object-contain rounded-lg shadow-md border"
-                />
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {previewUrls.map((url, index) => (
+                    <div key={index} className="relative">
+                      <img
+                        src={url}
+                        alt={`Preview ${index + 1}`}
+                        className="max-h-64 w-auto object-contain rounded-lg shadow-md border"
+                      />
+                      <button
+                        onClick={() => removeFile(index)}
+                        className="absolute top-2 right-2 bg-red-600 text-white rounded-full p-1"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
                 <p className="text-sm text-gray-600">Ready to process</p>
               </div>
             ) : (
@@ -246,8 +601,8 @@ export default function Home() {
 
           <div className="flex gap-3">
             <Button
-              onClick={handleParse}
-              disabled={!file || loading}
+              onClick={handleParseAll}
+              disabled={files.length === 0 || loading}
               className="flex-1 gap-2 bg-gradient-to-r from-blue-600 to-blue-400 hover:from-blue-700 hover:to-purple-700"
             >
               {loading ? (
@@ -258,13 +613,13 @@ export default function Home() {
               ) : (
                 <>
                   <Sparkles className="w-4 h-4" />
-                  Parse Receipt
+                  Parse Receipts
                 </>
               )}
             </Button>
             <Button
               onClick={() => {
-                handleFilePicked(null);
+                handleFilesPicked(null);
                 if (inputRef.current) inputRef.current.value = "";
               }}
               variant="outline"
@@ -290,6 +645,17 @@ export default function Home() {
                   <p className="text-sm font-medium">
                     Rate limit reached. Automatically retrying...
                   </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {autoUploadSuccess && (
+            <Card className="bg-green-50 border-green-200">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 text-green-800">
+                  <ExternalLink className="w-4 h-4" />
+                  <p className="text-sm font-medium">{autoUploadSuccess}</p>
                 </div>
               </CardContent>
             </Card>
@@ -333,16 +699,17 @@ export default function Home() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-gray-50">
-                    <th className="py-3 px-4 text-left font-medium">Preview</th>
                     <th className="py-3 px-4 text-left font-medium">Business</th>
                     <th className="py-3 px-4 text-left font-medium">Location</th>
                     <th className="py-3 px-4 text-left font-medium">TIN</th>
+                    <th className="py-3 px-4 text-left font-medium">Invoice #</th>
                     <th className="py-3 px-4 text-left font-medium">VAT</th>
                     <th className="py-3 px-4 text-left font-medium">VAT Excl</th>
                     <th className="py-3 px-4 text-left font-medium">VAT Incl</th>
                     <th className="py-3 px-4 text-left font-medium">PWD Discount</th>
                     <th className="py-3 px-4 text-left font-medium">Discount Amount</th>
                     <th className="py-3 px-4 text-left font-medium">Total Due</th>
+                    <th className="py-3 px-4 text-left font-medium">Drive Link</th>
                     <th className="py-3 px-4 text-left font-medium">Actions</th>
                   </tr>
                 </thead>
@@ -350,22 +717,10 @@ export default function Home() {
                   {rows.map((r, i) => (
                     <>
                       <tr key={`row-${i}`} className="border-b hover:bg-gray-50 transition-colors">
-                        <td className="py-3 px-4">
-                          {r.imageUrl ? (
-                            <img 
-                              src={r.imageUrl} 
-                              alt="receipt" 
-                              className="h-12 w-auto object-contain rounded border shadow-sm" 
-                            />
-                          ) : (
-                            <div className="h-12 w-16 bg-gray-100 rounded flex items-center justify-center">
-                              <FileText className="w-4 h-4 text-gray-400" />
-                            </div>
-                          )}
-                        </td>
                         <td className="py-3 px-4 font-medium">{r.parsed.businessName || '-'}</td>
                         <td className="py-3 px-4">{r.parsed.location || '-'}</td>
                         <td className="py-3 px-4 font-mono text-xs">{r.parsed.tin || '-'}</td>
+                        <td className="py-3 px-4 font-mono text-xs">{r.parsed.invoiceNumber || '-'}</td>
                         <td className="py-3 px-4">{r.parsed.vat || '-'}</td>
                         <td className="py-3 px-4">{r.parsed.vatExcl || '-'}</td>
                         <td className="py-3 px-4 font-medium">{r.parsed.vatIncl || '-'}</td>
@@ -373,7 +728,53 @@ export default function Home() {
                         <td className="py-3 px-4">{r.parsed.pwdDiscountAmount || '-'}</td>
                         <td className="py-3 px-4 font-bold text-green-600">{r.parsed.totalAmountDue || '-'}</td>
                         <td className="py-3 px-4">
+                          {r.parsed.driveWebViewLink || r.driveLink ? (
+                            <div className="flex flex-col gap-1">
+                              <a
+                                href={r.parsed.driveWebViewLink || r.driveLink || '#'}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                                View in Drive
+                              </a>
+                              {r.parsed.driveFileName && (
+                                <span className="text-xs text-gray-500 truncate max-w-24" title={r.parsed.driveFileName}>
+                                  {r.parsed.driveFileName}
+                                </span>
+                              )}
+                            </div>
+                          ) : uploadingToDrive === i ? (
+                            <div className="flex items-center gap-1 text-xs text-blue-600">
+                              <div className="w-3 h-3 border-2 border-blue-600/30 border-t-blue-600 rounded-full animate-spin" />
+                              <span>Uploading...</span>
+                            </div>
+                          ) : (
+                            <span className="text-gray-400 text-xs">Not uploaded</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4">
                           <div className="flex gap-2">
+                            <Button
+                              onClick={() => handleUploadToDrive(i)}
+                              disabled={uploadingToDrive === i || !r.imageUrl || !!(r.parsed.driveWebViewLink || r.driveLink)}
+                              variant="outline"
+                              size="sm"
+                              title={
+                                (r.parsed.driveWebViewLink || r.driveLink) 
+                                  ? "Already uploaded to Drive" 
+                                  : "Upload to Google Drive"
+                              }
+                            >
+                              {uploadingToDrive === i ? (
+                                <div className="w-3 h-3 border border-gray-300 border-t-blue-600 rounded-full animate-spin" />
+                              ) : (r.parsed.driveWebViewLink || r.driveLink) ? (
+                                <ExternalLink className="w-3 h-3 text-green-600" />
+                              ) : (
+                                <Upload className="w-3 h-3" />
+                              )}
+                            </Button>
                             <Button
                               onClick={() => handleSave(r.parsed)}
                               variant="outline"
@@ -405,7 +806,7 @@ export default function Home() {
                       </tr>
                       {r.expanded && (
                         <tr key={`exp-${i}`} className="border-b bg-gray-25">
-                          <td className="p-4" colSpan={11}>
+                          <td className="p-4" colSpan={12}>
                             <Card className="bg-white/50">
                               <CardHeader className="pb-3">
                                 <CardTitle className="text-sm">OCR Raw Text</CardTitle>
@@ -465,7 +866,7 @@ export default function Home() {
               <Receipt className="w-4 h-4" />
               Receipt OCR
             </button>
-            <button
+            {/* <button
               onClick={() => setActiveTab('gemini')}
               className={`flex items-center gap-2 px-6 py-4 font-medium transition-all duration-300 relative ${
                 activeTab === 'gemini'
@@ -475,7 +876,7 @@ export default function Home() {
             >
               <Brain className="w-4 h-4" />
               Gemini AI
-            </button>
+            </button> */}
           </div>
         </Card>
 

@@ -5,7 +5,7 @@ import { Readable } from 'stream';
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_DRIVE_CLIENT_ID,
   process.env.GOOGLE_DRIVE_CLIENT_SECRET,
-  'http://localhost:3000' // redirect URI (not used for refresh token flow)
+  'http://localhost:3000'
 );
 
 oauth2Client.setCredentials({
@@ -30,6 +30,8 @@ export async function uploadToGoogleDrive(
   mimeType: string = 'image/jpeg'
 ): Promise<UploadResult> {
   try {
+    console.log('Uploading to Google Drive:', fileName);
+    
     // Convert buffer to readable stream
     const stream = new Readable();
     stream.push(buffer);
@@ -51,7 +53,7 @@ export async function uploadToGoogleDrive(
       throw new Error('Failed to upload file to Google Drive');
     }
 
-    // Make file publicly viewable (optional)
+    // Make file publicly viewable
     await drive.permissions.create({
       fileId: response.data.id,
       requestBody: {
@@ -59,6 +61,8 @@ export async function uploadToGoogleDrive(
         type: 'anyone',
       },
     });
+
+    console.log('Successfully uploaded to Google Drive:', response.data.name);
 
     return {
       fileId: response.data.id,
@@ -68,7 +72,7 @@ export async function uploadToGoogleDrive(
     };
   } catch (error) {
     console.error('Error uploading to Google Drive:', error);
-    throw new Error('Failed to upload to Google Drive');
+    throw new Error(`Failed to upload to Google Drive: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
@@ -76,14 +80,15 @@ export async function uploadToGoogleDrive(
  * Generate filename with format: "YYYY-MM-DD_CompanyName_InvoiceNumber_Amount"
  */
 export function generateDriveFileName(
+  dateIssued: string | null,
   businessName: string | null,
   invoiceNumber: string | null,
   amount: number | null,
   extension: string = 'jpg'
 ): string {
-  const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
-  const company = (businessName || 'Unknown').replace(/[^a-zA-Z0-9]/g, '_');
-  const invoice = (invoiceNumber || 'NoInvoice').replace(/[^a-zA-Z0-9]/g, '_');
+  const date = dateIssued || new Date().toISOString().split('T')[0];
+  const company = (businessName || 'Unknown').replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30);
+  const invoice = (invoiceNumber || 'NoInvoice').replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
   const amountStr = amount ? amount.toFixed(2).replace('.', '_') : '0_00';
   
   return `${date}_${company}_${invoice}_${amountStr}.${extension}`;
