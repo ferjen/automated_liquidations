@@ -242,6 +242,7 @@ export default function Home() {
       "Business Name",
       "Location",
       "TIN",
+      "Invoice Number",
       "VAT",
       "VAT Excl",
       "VAT Incl",
@@ -256,6 +257,7 @@ export default function Home() {
         r.parsed.businessName ?? "",
         r.parsed.location ?? "",
         r.parsed.tin ?? "",
+        r.parsed.invoiceNumber ?? "",
         r.parsed.vat ?? "",
         r.parsed.vatExcl ?? "",
         r.parsed.vatIncl ?? "",
@@ -489,10 +491,10 @@ export default function Home() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-gray-50">
-                    <th className="py-3 px-4 text-left font-medium">Preview</th>
                     <th className="py-3 px-4 text-left font-medium">Business</th>
                     <th className="py-3 px-4 text-left font-medium">Location</th>
                     <th className="py-3 px-4 text-left font-medium">TIN</th>
+                    <th className="py-3 px-4 text-left font-medium">Invoice #</th>
                     <th className="py-3 px-4 text-left font-medium">VAT</th>
                     <th className="py-3 px-4 text-left font-medium">VAT Excl</th>
                     <th className="py-3 px-4 text-left font-medium">VAT Incl</th>
@@ -507,22 +509,10 @@ export default function Home() {
                   {rows.map((r, i) => (
                     <>
                       <tr key={`row-${i}`} className="border-b hover:bg-gray-50 transition-colors">
-                        <td className="py-3 px-4">
-                          {r.imageUrl ? (
-                            <img 
-                              src={r.imageUrl} 
-                              alt="receipt" 
-                              className="h-12 w-auto object-contain rounded border shadow-sm" 
-                            />
-                          ) : (
-                            <div className="h-12 w-16 bg-gray-100 rounded flex items-center justify-center">
-                              <FileText className="w-4 h-4 text-gray-400" />
-                            </div>
-                          )}
-                        </td>
                         <td className="py-3 px-4 font-medium">{r.parsed.businessName || '-'}</td>
                         <td className="py-3 px-4">{r.parsed.location || '-'}</td>
                         <td className="py-3 px-4 font-mono text-xs">{r.parsed.tin || '-'}</td>
+                        <td className="py-3 px-4 font-mono text-xs">{r.parsed.invoiceNumber || '-'}</td>
                         <td className="py-3 px-4">{r.parsed.vat || '-'}</td>
                         <td className="py-3 px-4">{r.parsed.vatExcl || '-'}</td>
                         <td className="py-3 px-4 font-medium">{r.parsed.vatIncl || '-'}</td>

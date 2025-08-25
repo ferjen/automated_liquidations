@@ -1,12 +1,15 @@
 export type ParsedReceipt = {
 	businessName: string | null;
-	location: string | null;
-	tin: string | null; // Tax Identification Number
-	vat: number | null; // VAT amount
-	vatExcl: number | null; // Subtotal excluding VAT
-	vatIncl: number | null; // Total including VAT
-	pwdDiscountLabel: string | null; // e.g., "PWD Discount"
-	pwdDiscountAmount: number | null;
+  location: string | null;
+  tin: string | null;
+  invoiceNumber: string | null; // Add this line
+  vat: number | null;
+  vatExcl: number | null;
+  vatIncl: number | null;
+  pwdDiscountLabel: string | null;
+  pwdDiscountAmount: number | null;
+  totalAmountDue: number | null;
+  bestByDate: string | null;
 };
 
 function extractNumber(text: string): number | null {
@@ -58,6 +61,14 @@ export function parseReceiptText(fullText: string): ParsedReceipt {
 		if (m) tin = m[2];
 	}
 
+	// Invoice Number
+	let invoiceNumber: string | null = null;
+	const invoiceLine = lines.find((l) => /\binvoice\s*no\.?|invoice\s*number/i.test(l));
+	if (invoiceLine) {
+		const m = invoiceLine.match(/(?:invoice\s*no\.?|invoice\s*number)[:\s-]*([A-Za-z0-9-]+)/i);
+		if (m) invoiceNumber = m[1];
+	}
+
 	// VAT amounts
 	let vat: number | null = null;
 	let vatExcl: number | null = null;
@@ -84,12 +95,15 @@ export function parseReceiptText(fullText: string): ParsedReceipt {
 	return {
 		businessName,
 		location,
+		invoiceNumber,
 		tin,
 		vat,
 		vatExcl,
 		vatIncl,
 		pwdDiscountLabel,
 		pwdDiscountAmount,
+		totalAmountDue: null, // Add default value or logic to extract this
+		bestByDate: null, // Add default value or logic to extract this
 	};
 }
 

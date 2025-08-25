@@ -228,22 +228,29 @@ export async function analyzeReceiptImage(
         // { apiVersion: 'v1beta' }
       );
 
-      const prompt = `extract all information from the image, 
-      including business details, VAT, discounts, best by/expiry date, and 
+      const prompt = `Extract all information from the image, 
+      including business details, VAT, discounts, invoice/receipt number, best by/expiry date, and 
       any other relevant fields. 
       Return the result strictly in JSON format:
       {
         "businessName": "...",
         "location": "...",
         "tin": "...",
+        "invoiceNumber": "...",
         "vat": number|null,
         "vatExcl": number|null,
         "vatIncl": number|null,
         "pwdDiscountLabel": "...",
         "pwdDiscountAmount": number|null,
         "bestByDate": "YYYY-MM-DD" | null,
-        "totalAmountDue": "number"|null
-      }`;
+        "totalAmountDue": number|null
+      }
+
+      Important notes:
+      - Look for invoice number, receipt number, OR number, reference number, or any similar identifier
+      - Extract the exact number/code as it appears on the receipt
+      - If no invoice/receipt number is found, use null
+      - Numbers should be numeric values, not strings (except for invoiceNumber and businessName which should be strings)`;
 
       const imagePart = { inlineData: { data: imageData, mimeType: 'image/jpeg' } };
 
@@ -259,6 +266,7 @@ export async function analyzeReceiptImage(
         businessName: parsedData.businessName || null,
         location: parsedData.location || null,
         tin: parsedData.tin || null,
+        invoiceNumber: parsedData.invoiceNumber || null, // Add this line
         vat: typeof parsedData.vat === 'number' ? parsedData.vat : null,
         vatExcl: typeof parsedData.vatExcl === 'number' ? parsedData.vatExcl : null,
         vatIncl: typeof parsedData.vatIncl === 'number' ? parsedData.vatIncl : null,
